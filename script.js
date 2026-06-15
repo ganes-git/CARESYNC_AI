@@ -120,6 +120,26 @@ function App() {
     { t:now(), m:"Real-time telemetry active — 2s intervals.", k:"info" },
   ]);
 
+  // ─── Manual Intake & Vitals State ───
+  const [intakeIsNew, setIntakeIsNew] = useState(true);
+  const [intakeId, setIntakeId] = useState("");
+  const [intakeName, setIntakeName] = useState("");
+  const [intakeAge, setIntakeAge] = useState("");
+  const [intakeGender, setIntakeGender] = useState("M");
+  const [intakeRoom, setIntakeRoom] = useState("");
+  const [intakeDx, setIntakeDx] = useState("");
+
+  const [intakeHR, setIntakeHR] = useState("80");
+  const [intakeO2, setIntakeO2] = useState("98");
+  const [intakeBPS, setIntakeBPS] = useState("120");
+  const [intakeBPD, setIntakeBPD] = useState("80");
+  const [intakeRR, setIntakeRR] = useState("16");
+  const [intakeTemp, setIntakeTemp] = useState("37.0");
+
+  const [intakeResult, setIntakeResult] = useState(null);
+  const [intakeErr, setIntakeErr] = useState("");
+
+
   const oscRef = useRef(null);
   const osc2Ref = useRef(null);
   const gainRef = useRef(null);
@@ -302,6 +322,127 @@ function App() {
     setAcked(pr=>{const n=new Set(pr);if(n.has(pid)){n.delete(pid);addLog(`🔔 Siren re-activated: ${p?.name}`,"warning");}else{n.add(pid);addLog(`✓ Alarm acknowledged: ${p?.name}`,"info");}return n;});
   };
 
+  // ─── Pre-fill Vitals when selecting an existing patient ───
+  useEffect(() => {
+    if (!intakeIsNew && intakeId) {
+      const p = pts.find(x => x.id === +intakeId);
+      if (p) {
+        setIntakeHR(p.v.hr.c.toString());
+        setIntakeO2(p.v.o2.c.toString());
+        setIntakeBPS(p.v.bp.cs.toString());
+        setIntakeBPD(p.v.bp.cd.toString());
+        setIntakeRR(p.v.rr.c.toString());
+        setIntakeTemp(p.v.tp.c.toString());
+      }
+    } else if (intakeIsNew) {
+      setIntakeHR("80");
+      setIntakeO2("98");
+      setIntakeBPS("120");
+      setIntakeBPD("80");
+      setIntakeRR("16");
+      setIntakeTemp("37.0");
+    }
+  }, [intakeId, intakeIsNew]);
+
+  const submitIntake = (e) => {
+    e.preventDefault();
+    setIntakeErr("");
+    setIntakeResult(null);
+
+    // Validation
+    const hr = parseInt(intakeHR);
+    const o2 = parseInt(intakeO2);
+    const bps = parseInt(intakeBPS);
+    const bpd = parseInt(intakeBPD);
+    const rr = parseInt(intakeRR);
+    const temp = parseFloat(intakeTemp);
+
+    if (isNaN(hr) || hr < 20 || hr > 220) return setIntakeErr("Heart Rate must be between 20 and 220 bpm");
+    if (isNaN(o2) || o2 < 50 || o2 > 100) return setIntakeErr("SpO₂ must be between 50% and 100%");
+    if (isNaN(bps) || bps < 40 || bps > 240) return setIntakeErr("Systolic BP must be between 40 and 240 mmHg");
+    if (isNaN(bpd) || bpd < 20 || bpd > 150) return setIntakeErr("Diastolic BP must be between 20 and 150 mmHg");
+    if (isNaN(rr) || rr < 5 || rr > 60) return setIntakeErr("Respiratory Rate must be between 5 and 60 rpm");
+    if (isNaN(temp) || temp < 30 || temp > 43) return setIntakeErr("Temperature must be between 30°C and 43°C");
+
+    let targetPatient = null;
+
+    if (intakeIsNew) {
+      if (!intakeName.trim()) return setIntakeErr("Patient Name is required");
+      if (!intakeRoom.trim()) return setIntakeErr("Room Number is required");
+      if (!intakeAge || isNaN(parseInt(intakeAge))) return setIntakeErr("Valid Age is required");
+      
+      const newId = pts.length ? Math.max(...pts.map(p => p.id)) + 1 : 1;
+      const v = {
+        hr: { c: hr, h: hist(hr, 4), bl: 75, lo: 60, hi: 100, u: "bpm", t: "stable" },
+        bp: { cs: bps, cd: bpd, hs: hist(bps, 6), hd: hist(bpd, 4), bls: 120, bld: 80, los: 90, his: 140, lod: 60, hid: 90, u: "mmHg", t: "stable" },
+        o2: { c: o2, h: hist(o2, 1), bl: 98, lo: 95, hi: 100, u: "%", t: "stable" },
+        rr: { c: rr, h: hist(rr, 2), bl: 15, lo: 12, hi: 20, u: "rpm", t: "stable" },
+        tp: { c: temp, h: hist(temp, 0.15), bl: 36.8, lo: 36, hi: 37.8, u: "°C", t: "stable" }
+      };
+      
+      const sc = calcScore(v);
+      targetPatient = {
+        id: newId,
+        name: intakeName.trim(),
+        age: parseInt(intakeAge),
+        g: intakeGender,
+        room: intakeRoom.trim().toUpperCase(),
+        dx: intakeDx.trim() || "Observed Admission",
+        v,
+        score: sc,
+        sev: sc >= 70 ? "critical" : sc >= 40 ? "warning" : "stable"
+      };
+
+      setPts(prev => [...prev, targetPatient]);
+      addLog(`➕ Manual Admission: ${targetPatient.name} in Room ${targetPatient.room} (Score: ${sc})`, targetPatient.sev);
+    } else {
+      if (!intakeId) return setIntakeErr("Please select a patient to update");
+      const pid = parseInt(intakeId);
+      const prevPt = pts.find(p => p.id === pid);
+      if (!prevPt) return setIntakeErr("Selected patient not found");
+
+      const v = {
+        hr: { ...prevPt.v.hr, c: hr, h: [...prevPt.v.hr.h.slice(1), hr], t: hr > prevPt.v.hr.c ? "up" : hr < prevPt.v.hr.c ? "down" : "stable" },
+        bp: { ...prevPt.v.bp, cs: bps, cd: bpd, hs: [...prevPt.v.bp.hs.slice(1), bps], hd: [...prevPt.v.bp.hd.slice(1), bpd], t: bps > prevPt.v.bp.cs ? "up" : bps < prevPt.v.bp.cs ? "down" : "stable" },
+        o2: { ...prevPt.v.o2, c: o2, h: [...prevPt.v.o2.h.slice(1), o2], t: o2 > prevPt.v.o2.c ? "up" : o2 < prevPt.v.o2.c ? "down" : "stable" },
+        rr: { ...prevPt.v.rr, c: rr, h: [...prevPt.v.rr.h.slice(1), rr], t: rr > prevPt.v.rr.c ? "up" : rr < prevPt.v.rr.c ? "down" : "stable" },
+        tp: { ...prevPt.v.tp, c: temp, h: [...prevPt.v.tp.h.slice(1), temp], t: temp > prevPt.v.tp.c ? "up" : temp < prevPt.v.tp.c ? "down" : "stable" }
+      };
+
+      const sc = calcScore(v);
+      targetPatient = {
+        ...prevPt,
+        v,
+        score: sc,
+        sev: sc >= 70 ? "critical" : sc >= 40 ? "warning" : "stable"
+      };
+
+      setPts(prev => prev.map(p => p.id === pid ? targetPatient : p));
+      addLog(`⚡ Manual Vitals Update: ${targetPatient.name} (Score: ${sc})`, targetPatient.sev);
+    }
+
+    // Silence if stabled, trigger if newly critical
+    if (targetPatient.sev === "critical" && !acked.has(targetPatient.id)) {
+      setAcked(prev => { const n = new Set(prev); n.delete(targetPatient.id); return n; });
+    }
+
+    setIntakeResult({
+      id: targetPatient.id,
+      name: targetPatient.name,
+      room: targetPatient.room,
+      score: targetPatient.score,
+      sev: targetPatient.sev
+    });
+
+    // Reset Form Fields if it was new admission
+    if (intakeIsNew) {
+      setIntakeName("");
+      setIntakeAge("");
+      setIntakeRoom("");
+      setIntakeDx("");
+    }
+  };
+
   const openFocus = (id) => { setSelId(id); setView("focus"); };
 
   // ═══ RENDER ═══
@@ -338,6 +479,7 @@ function App() {
       <nav className="nav">
         <button className={`nav-btn ${view==="ward"?"on":""}`} onClick={()=>setView("ward")}>🏥 Ward</button>
         <button className={`nav-btn ${view==="focus"?"on":""}`} onClick={()=>{if(sel)setView("focus");else setView("ward");}}>🔬 Focus{sel&&<span className="badge g">●</span>}</button>
+        <button className={`nav-btn ${view==="intake"?"on":""}`} onClick={()=>setView("intake")}>➕ Admit / Vitals</button>
         <button className={`nav-btn ${view==="analytics"?"on":""}`} onClick={()=>setView("analytics")}>📊 Analytics</button>
         <button className={`nav-btn ${view==="events"?"on":""}`} onClick={()=>setView("events")}>📋 Log<span className="badge a">{log.length}</span></button>
         <div className="nav-spacer"></div>
@@ -548,6 +690,228 @@ function App() {
             <button className="go-btn" onClick={()=>setView("ward")}>Go to Ward</button>
           </div>
         ))}
+
+        {/* ── INTAKE / VITALS INPUT ── */}
+        {view==="intake" && (
+          <div style={{maxWidth:'680px',margin:'0 auto'}}>
+            <div className="sec-title">Patient Intake & Vitals Input</div>
+            
+            <div className="ana-card" style={{marginBottom:'1.5rem'}}>
+              <div style={{display:'flex',gap:'1rem',marginBottom:'1.25rem',borderBottom:'1px solid var(--border)',paddingBottom:'0.75rem'}}>
+                <button 
+                  type="button"
+                  className={`pill ${intakeIsNew?'active':''}`} 
+                  onClick={()=>{setIntakeIsNew(true); setIntakeResult(null); setIntakeErr("");}}
+                  style={{fontSize:'0.8rem',padding:'0.4rem 1rem'}}
+                >
+                  ➕ Admit New Patient
+                </button>
+                <button 
+                  type="button"
+                  className={`pill ${!intakeIsNew?'active':''}`} 
+                  onClick={()=>{setIntakeIsNew(false); setIntakeResult(null); setIntakeErr("");}}
+                  style={{fontSize:'0.8rem',padding:'0.4rem 1rem'}}
+                >
+                  ⚙️ Update Vitals
+                </button>
+              </div>
+
+              {intakeErr && (
+                <div style={{background:'var(--red-d)',border:'1px solid var(--red)',color:'var(--red)',padding:'0.75rem 1rem',borderRadius:'8px',marginBottom:'1rem',fontSize:'0.82rem',fontWeight:'700'}}>
+                  ⚠️ {intakeErr}
+                </div>
+              )}
+
+              {intakeResult && (
+                <div style={{background:'rgba(34,211,238,0.06)',border:'2px solid var(--cyan)',padding:'1.25rem',borderRadius:'12px',marginBottom:'1.5rem'}}>
+                  <h4 style={{color:'var(--cyan)',fontSize:'1rem',fontWeight:'800',marginBottom:'0.5rem'}}>
+                    ✓ ANALYSIS COMPLETE & APPROVED
+                  </h4>
+                  <p style={{fontSize:'0.85rem',color:'var(--t2)',marginBottom:'0.85rem'}}>
+                    Vitals processed for <strong>{intakeResult.name}</strong> (Room {intakeResult.room}).
+                  </p>
+                  <div style={{display:'flex',alignItems:'center',gap:'1rem',marginBottom:'1rem'}}>
+                    <div>
+                      <div style={{fontSize:'0.72rem',color:'var(--t3)',textTransform:'uppercase'}}>Calculated Score</div>
+                      <span style={{fontFamily:'var(--fm)',fontSize:'2.2rem',fontWeight:'900',color:'var(--t1)'}}>{intakeResult.score}</span>
+                      <span style={{fontSize:'0.8rem',color:'var(--t4)'}}>/100</span>
+                    </div>
+                    <div style={{marginLeft:'auto',textAlign:'right'}}>
+                      <div style={{fontSize:'0.72rem',color:'var(--t3)',textTransform:'uppercase',marginBottom:'0.2rem'}}>Clinical Alarm Status</div>
+                      <span className={`sev-tag ${intakeResult.sev}`} style={{fontSize:'0.8rem',padding:'0.3rem 0.8rem'}}>
+                        {intakeResult.sev === 'critical' ? '🚨 EMERGENCY DECLARED' : intakeResult.sev === 'warning' ? '⚠️ WARNING ALERT' : '✅ STABLE'}
+                      </span>
+                    </div>
+                  </div>
+                  <div style={{display:'flex',gap:'0.75rem'}}>
+                    <button type="button" className="btn-apply" onClick={() => { setSelId(intakeResult.id); setView("focus"); }} style={{padding:'0.55rem',fontSize:'0.85rem'}}>
+                      🔍 Go to bedside Focus View
+                    </button>
+                    <button type="button" className="back-btn" onClick={() => { setIntakeResult(null); setView("ward"); }} style={{padding:'0.55rem',fontSize:'0.85rem'}}>
+                      🏥 Return to Ward
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              <form onSubmit={submitIntake}>
+                {intakeIsNew ? (
+                  <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'1rem',marginBottom:'1rem'}}>
+                    <div>
+                      <label style={{fontSize:'0.75rem',color:'var(--t3)',display:'block',marginBottom:'0.25rem',fontWeight:'700'}}>Patient Name *</label>
+                      <input 
+                        className="demo-select" 
+                        style={{width:'100%',background:'var(--bg-0)'}} 
+                        type="text" 
+                        value={intakeName} 
+                        onChange={e=>setIntakeName(e.target.value)} 
+                        placeholder="e.g. John Doe"
+                      />
+                    </div>
+                    <div>
+                      <label style={{fontSize:'0.75rem',color:'var(--t3)',display:'block',marginBottom:'0.25rem',fontWeight:'700'}}>Room *</label>
+                      <input 
+                        className="demo-select" 
+                        style={{width:'100%',background:'var(--bg-0)'}} 
+                        type="text" 
+                        value={intakeRoom} 
+                        onChange={e=>setIntakeRoom(e.target.value)} 
+                        placeholder="e.g. ICU-3E"
+                      />
+                    </div>
+                    <div>
+                      <label style={{fontSize:'0.75rem',color:'var(--t3)',display:'block',marginBottom:'0.25rem',fontWeight:'700'}}>Age *</label>
+                      <input 
+                        className="demo-select" 
+                        style={{width:'100%',background:'var(--bg-0)'}} 
+                        type="number" 
+                        value={intakeAge} 
+                        onChange={e=>setIntakeAge(e.target.value)} 
+                        placeholder="e.g. 54"
+                      />
+                    </div>
+                    <div>
+                      <label style={{fontSize:'0.75rem',color:'var(--t3)',display:'block',marginBottom:'0.25rem',fontWeight:'700'}}>Gender *</label>
+                      <select 
+                        className="demo-select" 
+                        style={{width:'100%',background:'var(--bg-0)'}} 
+                        value={intakeGender} 
+                        onChange={e=>setIntakeGender(e.target.value)}
+                      >
+                        <option value="M">Male</option>
+                        <option value="F">Female</option>
+                      </select>
+                    </div>
+                    <div style={{gridColumn:'span 2'}}>
+                      <label style={{fontSize:'0.75rem',color:'var(--t3)',display:'block',marginBottom:'0.25rem',fontWeight:'700'}}>Diagnosis</label>
+                      <input 
+                        className="demo-select" 
+                        style={{width:'100%',background:'var(--bg-0)'}} 
+                        type="text" 
+                        value={intakeDx} 
+                        onChange={e=>setIntakeDx(e.target.value)} 
+                        placeholder="e.g. Acute Myocardial Infarction"
+                      />
+                    </div>
+                  </div>
+                ) : (
+                  <div style={{marginBottom:'1.25rem'}}>
+                    <label style={{fontSize:'0.75rem',color:'var(--t3)',display:'block',marginBottom:'0.25rem',fontWeight:'700'}}>Select Patient to Update *</label>
+                    <select 
+                      className="demo-select" 
+                      style={{width:'100%',background:'var(--bg-0)'}} 
+                      value={intakeId} 
+                      onChange={e=>{setIntakeId(e.target.value); setIntakeResult(null);}}
+                    >
+                      <option value="">-- Choose Patient --</option>
+                      {pts.map(p => (
+                        <option key={p.id} value={p.id}>{p.name} ({p.room}) — Current Score: {p.score}</option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+
+                <div style={{borderTop:'1px solid var(--border)',paddingTop:'1rem',marginTop:'1rem'}}>
+                  <h4 style={{fontSize:'0.8rem',color:'var(--cyan)',textTransform:'uppercase',letterSpacing:'0.05em',marginBottom:'0.85rem'}}>
+                    🩺 Clinical Vital Telemetry
+                  </h4>
+                  
+                  <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'1rem'}}>
+                    <div>
+                      <label style={{fontSize:'0.75rem',color:'var(--t3)',display:'block',marginBottom:'0.25rem',fontWeight:'700'}}>Heart Rate (bpm)</label>
+                      <input 
+                        className="demo-select" 
+                        style={{width:'100%',background:'var(--bg-0)'}} 
+                        type="number" 
+                        value={intakeHR} 
+                        onChange={e=>setIntakeHR(e.target.value)}
+                      />
+                    </div>
+                    <div>
+                      <label style={{fontSize:'0.75rem',color:'var(--t3)',display:'block',marginBottom:'0.25rem',fontWeight:'700'}}>SpO₂ Oxygen (%)</label>
+                      <input 
+                        className="demo-select" 
+                        style={{width:'100%',background:'var(--bg-0)'}} 
+                        type="number" 
+                        value={intakeO2} 
+                        onChange={e=>setIntakeO2(e.target.value)}
+                      />
+                    </div>
+                    <div>
+                      <label style={{fontSize:'0.75rem',color:'var(--t3)',display:'block',marginBottom:'0.25rem',fontWeight:'700'}}>Systolic BP (mmHg)</label>
+                      <input 
+                        className="demo-select" 
+                        style={{width:'100%',background:'var(--bg-0)'}} 
+                        type="number" 
+                        value={intakeBPS} 
+                        onChange={e=>setIntakeBPS(e.target.value)}
+                      />
+                    </div>
+                    <div>
+                      <label style={{fontSize:'0.75rem',color:'var(--t3)',display:'block',marginBottom:'0.25rem',fontWeight:'700'}}>Diastolic BP (mmHg)</label>
+                      <input 
+                        className="demo-select" 
+                        style={{width:'100%',background:'var(--bg-0)'}} 
+                        type="number" 
+                        value={intakeBPD} 
+                        onChange={e=>setIntakeBPD(e.target.value)}
+                      />
+                    </div>
+                    <div>
+                      <label style={{fontSize:'0.75rem',color:'var(--t3)',display:'block',marginBottom:'0.25rem',fontWeight:'700'}}>Respiratory Rate (rpm)</label>
+                      <input 
+                        className="demo-select" 
+                        style={{width:'100%',background:'var(--bg-0)'}} 
+                        type="number" 
+                        value={intakeRR} 
+                        onChange={e=>setIntakeRR(e.target.value)}
+                      />
+                    </div>
+                    <div>
+                      <label style={{fontSize:'0.75rem',color:'var(--t3)',display:'block',marginBottom:'0.25rem',fontWeight:'700'}}>Temperature (°C)</label>
+                      <input 
+                        className="demo-select" 
+                        style={{width:'100%',background:'var(--bg-0)'}} 
+                        type="number" 
+                        step="0.1" 
+                        value={intakeTemp} 
+                        onChange={e=>setIntakeTemp(e.target.value)}
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                <button 
+                  type="submit" 
+                  className="demo-launch" 
+                  style={{width:'100%',marginTop:'1.5rem',padding:'0.8rem',fontSize:'0.9rem'}}
+                >
+                  {intakeIsNew ? "➕ ADMIT & ANALYZE CLINICAL VECTORS" : "⚡ UPDATE & RE-CALCULATE SCORE"}
+                </button>
+              </form>
+            </div>
+          </div>
+        )}
 
         {/* ── ANALYTICS ── */}
         {view==="analytics" && (<div>
