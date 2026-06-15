@@ -64,4 +64,4 @@ To run the project locally:
 
 ## 🌐 Live Deployment
 The CareSync AI command center is deployed and running live on GitHub Pages:
-👉 **[CareSync AI Live Dashboard](DEPLOYED_LINK_PLACEHOLDER)**
+👉 **[CareSync AI Live Dashboard](https://ganes-git.github.io/CARESYNC_AI/)**
