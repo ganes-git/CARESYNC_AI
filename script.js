@@ -360,48 +360,73 @@ function App() {
             <div className="s-card wrn"><span className="s-label">Warning</span><span className="s-val">{stats.w}</span></div>
             <div className="s-card stb"><span className="s-label">Stable</span><span className="s-val">{stats.s}</span></div>
           </div>
-          <div className="sec-title">Patient Grid — sorted by crisis score</div>
-          <div className="grid">
-            {sorted.map(p => {
-              const ia = acked.has(p.id);
-              return (
-                <div key={p.id} className={`p-card sev-${p.sev} ${p.id===selId?'sel':''} ${ia?'acked':''}`} onClick={()=>openFocus(p.id)}>
-                  <div className="p-top">
-                    <div>
-                      <div className="p-name">{p.name}</div>
-                      <div className="p-meta">{p.age}{p.g} · {p.room} · {p.dx}</div>
-                    </div>
-                    <div className="score-circle" style={{
-                      borderColor: ia?'var(--blu)':p.sev==='critical'?'var(--red)':p.sev==='warning'?'var(--amb)':'var(--grn)',
-                      color: ia?'var(--blu)':p.sev==='critical'?'var(--red)':p.sev==='warning'?'var(--amb)':'var(--grn)',
-                      background: ia?'var(--blu-d)':p.sev==='critical'?'var(--red-d)':p.sev==='warning'?'var(--amb-d)':'var(--grn-d)'
-                    }}>{p.score}</div>
-                  </div>
-                  {/* HORIZONTAL vitals — label NEXT TO value, no overlap */}
-                  <div className="vitals-row">
-                    <div className={`v-chip ${p.v.o2.c<p.v.o2.lo?'abn':''}`}>
-                      <span className="v-lbl">O₂</span>
-                      <span className={`v-num ${p.v.o2.c<p.v.o2.lo?'bad':''}`}>{p.v.o2.c}%</span>
-                    </div>
-                    <div className={`v-chip ${p.v.hr.c>p.v.hr.hi||p.v.hr.c<p.v.hr.lo?'abn':''}`}>
-                      <span className="v-lbl">HR</span>
-                      <span className={`v-num ${p.v.hr.c>p.v.hr.hi||p.v.hr.c<p.v.hr.lo?'bad':''}`}>{p.v.hr.c}</span>
-                    </div>
-                    <div className={`v-chip ${p.v.bp.cs<p.v.bp.los||p.v.bp.cs>p.v.bp.his?'abn':''}`}>
-                      <span className="v-lbl">BP</span>
-                      <span className={`v-num ${p.v.bp.cs<p.v.bp.los||p.v.bp.cs>p.v.bp.his?'bad':''}`}>{p.v.bp.cs}/{p.v.bp.cd}</span>
-                    </div>
-                  </div>
-                  <div className="p-foot">
-                    <span className={`sev-tag ${ia?'ack':p.sev}`}>{ia?"Acked":p.sev}</span>
-                    {p.sev==="critical"&&!ia&&<span style={{animation:'blink 0.6s infinite alternate'}}>🚨</span>}
-                    <button className="open-btn">Open →</button>
-                  </div>
+            {/* 🚨 EMERGENCY SIMULATOR — Demo Panel */}
+            <div className="demo-panel">
+              <div className="demo-left">
+                <div className="demo-icon">🚨</div>
+                <div>
+                  <div className="demo-title">Emergency Crisis Simulator</div>
+                  <div className="demo-desc">Select a patient and trigger a rapid cardiogenic deterioration. The siren alarm, AI briefing, and vitals will respond in real-time.</div>
                 </div>
-              );
-            })}
-          </div>
-        </div>)}
+              </div>
+              <div className="demo-right">
+                <select className="demo-select" id="crisis-patient-select" value={selId || sorted[0]?.id} onChange={e => setSelId(+e.target.value)}>
+                  {sorted.map(p => (
+                    <option key={p.id} value={p.id}>{p.name} — {p.room} (Score: {p.score})</option>
+                  ))}
+                </select>
+                <button className="demo-launch" onClick={() => {
+                  const targetId = selId || sorted[0]?.id;
+                  if (targetId) triggerCrisis(targetId);
+                }} disabled={simSt !== "idle"}>
+                  {simSt === "idle" ? "⚡ LAUNCH CRISIS" : simSt === "countdown" ? "⏳ COUNTDOWN..." : "🔴 CRISIS ACTIVE"}
+                </button>
+              </div>
+            </div>
+
+            <div className="sec-title">Patient Grid — sorted by crisis score</div>
+            <div className="grid">
+              {sorted.map(p => {
+                const ia = acked.has(p.id);
+                return (
+                  <div key={p.id} className={`p-card sev-${p.sev} ${p.id===selId?'sel':''} ${ia?'acked':''}`} onClick={()=>openFocus(p.id)}>
+                    <div className="p-top">
+                      <div>
+                        <div className="p-name">{p.name}</div>
+                        <div className="p-meta">{p.age}{p.g} · {p.room} · {p.dx}</div>
+                      </div>
+                      <div className="score-circle" style={{
+                        borderColor: ia?'var(--blu)':p.sev==='critical'?'var(--red)':p.sev==='warning'?'var(--amb)':'var(--grn)',
+                        color: ia?'var(--blu)':p.sev==='critical'?'var(--red)':p.sev==='warning'?'var(--amb)':'var(--grn)',
+                        background: ia?'var(--blu-d)':p.sev==='critical'?'var(--red-d)':p.sev==='warning'?'var(--amb-d)':'var(--grn-d)'
+                      }}>{p.score}</div>
+                    </div>
+                    {/* HORIZONTAL vitals — label NEXT TO value, no overlap */}
+                    <div className="vitals-row">
+                      <div className={`v-chip ${p.v.o2.c<p.v.o2.lo?'abn':''}`}>
+                        <span className="v-lbl">O₂</span>
+                        <span className={`v-num ${p.v.o2.c<p.v.o2.lo?'bad':''}`}>{p.v.o2.c}%</span>
+                      </div>
+                      <div className={`v-chip ${p.v.hr.c>p.v.hr.hi||p.v.hr.c<p.v.hr.lo?'abn':''}`}>
+                        <span className="v-lbl">HR</span>
+                        <span className={`v-num ${p.v.hr.c>p.v.hr.hi||p.v.hr.c<p.v.hr.lo?'bad':''}`}>{p.v.hr.c}</span>
+                      </div>
+                      <div className={`v-chip ${p.v.bp.cs<p.v.bp.los||p.v.bp.cs>p.v.bp.his?'abn':''}`}>
+                        <span className="v-lbl">BP</span>
+                        <span className={`v-num ${p.v.bp.cs<p.v.bp.los||p.v.bp.cs>p.v.bp.his?'bad':''}`}>{p.v.bp.cs}/{p.v.bp.cd}</span>
+                      </div>
+                    </div>
+                    <div className="p-foot">
+                      <span className={`sev-tag ${ia?'ack':p.sev}`}>{ia?"Acked":p.sev}</span>
+                      {p.sev==="critical"&&!ia&&<span style={{animation:'blink 0.6s infinite alternate'}}>🚨</span>}
+                      <button className="open-btn">Open →</button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>)}
+
 
         {/* ── FOCUS (Single Column — Spacious) ── */}
         {view==="focus" && (sel ? (
